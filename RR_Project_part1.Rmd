@@ -1,0 +1,255 @@
+---
+title: Automated report writing using exploratory analysis of Movies data in R
+author: "Darya Misiula, Daria Ivanushenko"
+date: "9/11/2022"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+  word_document:
+    toc: yes
+params:
+  year:
+    label: "year"
+    value: 1995
+    input: slider
+    min: 1980
+    max: 2020
+    step: 1
+    sep: ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# GENERAL INFORAMTIOn ABOUT DATASET
+## INTRODUCTION
+
+We found a topic of movies very interesting to explore and understand which genres where dominating for the `r params$year`,how much money was invested and what kind of revenue was received after the movies were realeased. Additional elements including actors, genres, user ratings, and more play a role in this sort of stuff. Now, anyone with experience (like you) may inquire specifically about the movie industry, and seek clarification.
+
+We'll be exploring at the Movies Dataset from [Kaggle source Movies data set](https://www.kaggle.com/datasets/danielgrijalvas/movies), a website that has a lot of open-access dataset. We shall focus on following questions in exploratory analysis for the Movies dataset:
+
+1.  What genre of film is popular with viewers?
+
+2.  Who are the most popular genre during the `r params$year`
+
+3.  Which country is the top in producing movies for the `r params$year`                  
+
+## Loading required packages
+
+```{r, warning=FALSE, message=FALSE}
+if (!require(pacman)) {install.packages("pacman")}
+pacman::p_load(dplyr, visdat, purrr, ggplot2, funModeling, utils, corrplot, kableExtra, cluster, Rtsne, rstudioapp)
+```
+```{r}
+setwd(dirname(rsutioapp::getSourceEditorContext()$path))
+```
+
+
+## Importing data set
+
+The read.csv() function was used to import the movies.csv datasets and save it in the object `df`. In the next section the variables were explored using exploratory data analysis technique.
+
+```{r}
+df <-  read.csv(paste0(getwd, "/movies.csv"))
+dim(df)
+```
+
+
+The Movies dataset which is stored as object **df** has `r dim(df)[1]` observations and `r dim(df)[2]` variables.
+
+## Data description
+
+The variable names, types, and descriptions of each variable in the df data set are displayed in the table below. There are 10 variables total, 9 of which are numerical, and 1 character variable. Below is a description of each variable:
+
+| Variable name | Description                                                            | Type      |
+|---------------|-------------------------------------------|---------------|
+| name          | name of the movie                                                      | Character |
+| rating        | rating of the movie (R, PG, etc.)                                      | Character |
+| genre         | main genre of the movie                                                | Character |
+| year          | year of release                                                        | Integer   |
+| released      | release date (YYYY-MM-DD)                                              | Character |
+| score         | IMDb user rating                                                       | Numeric   |
+| votes         | number of user votes                                                   | Numeric   |
+| director      | the director                                                           | Character |
+| writer        | writer of the movie                                                    | Character |
+| star          | main actor/actress                                                     | Character |
+| country       | country of origin                                                      | Character |
+| budget        | the budget of a movie. Some movies don't have this, so it appears as 0 | Numeric   |
+| gross         | revenue of the movie                                                   | Numeric   |
+| company       | the production company                                                 | Character |
+| runtime       | duration of the movie                                                  | Numeric   |
+
+
+The above variables are not in a proper structural format and also the values of some variables are not in correct form so we shall do some initial data wrangling to solve these issues. 
+
+# EXPLORATORY DATA ANALYSIS
+
+```{r, echo = FALSE}
+df <- df %>%
+          filter(year == params$year)
+```
+
+```{r, message=FALSE}
+
+kbl(df) %>% 
+  kable_paper() %>% 
+  scroll_box(width = "100%", height = "200px")
+  
+```
+Exploratory data analysis was performed to see comparison of movies from various companies, genres, and other rating parameters from `r params$year` 
+
+We have observed some variables in the data set contain empty or blank strings. These blank values should be replaced with NAs to identify missing observations.
+
+```{r}
+df[df == ""] <- NA
+df <- na.omit(df)
+```
+
+We can split the variable released into two variables one comprising of release date and the second comprising of release country.
+
+```{r}
+df$release.date <- sub("\\(.*", "", df$released)
+df$release.country <- sub(".*\\(", "", df$released)
+df$release.country <- sub(")", "", df$release.country)
+```
+
+# OVERVIEW OF THE DATASET FOR `r params$year`
+
+We can also filter data according to the year range given in YAML part for params argument. 
+
+
+```{r include=FALSE}
+num.var <- length(select_if(df,is.numeric))
+char.var <- length(select_if(df,is.character))
+int.var <- length(select_if(df,is.integer))
+```
+
+
+Now the data set contains `r num.var` numeric vairbales and `r char.var` character variables for `r params$year`.
+
+
+The function vis_dat() from visdat package gives the visual overview of the data set. The plot shows the data set contains numeric and character variables while there are some missing values in the variable total_bedrooms.
+
+```{r}
+vis_dat(df, sort_type = FALSE)
+```
+
+```{r include=FALSE}
+na <- sum(sapply(df, is.na))
+na.var <- names(which(colSums(is.na(df)) > 0))
+```
+
+
+The plot shows clear distribution of variables according to its type. We can distinguish that this data set contains `r char.var` character variables and `r num.var` numeric variables out of which `r int.var` are integer variables. Further data set also shows `r na` missing observations in variable `r na.var`. We shall deal with missing observations later on while using those variable.
+
+# EXPLORATORY DATA ANALYSIS
+
+```{r include=FALSE}
+min.year <- min(params$year)
+max.year <- max(params$year)
+```
+
+Exploratory data analysis was performed to see comparison of movies from various companies, genres, and other rating parameters from `r min.year` through `r max.year`.
+
+
+To answer this question we shall explore following statements in the data set:
+
+1.  Visualizing numeric variables in the dataset
+2.  Visualizing character variables in the dataset
+3.  Correlation analysis
+4.  Other useful visualizations
+
+## Visualizing numeric variables in the dataset
+
+We will create a histogram for each of the numerical variables to help us comprehend them better.
+
+```{r, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+df %>%
+          select_if(is.numeric) %>%
+          select(-year) %>%
+          tidyr::pivot_longer(everything(), 
+                              names_to = "variables", 
+                              values_to = "values") %>%
+          ggplot(mapping = aes(x = values)) +
+          geom_histogram(bins = 30, 
+                         color = "black", 
+                         fill = "cornflowerblue") +
+          scale_x_log10()+
+          facet_wrap(facets = ~variables, scales = "free")
+          theme_bw() +
+          labs(title = "Frequency distribution of the numeric variables")
+
+```
+## Visualizing catagorical variables
+
+Using the ggplot() function from the ggplot2 package, the bargraph for the categorical variables were produced. With the help of the pipe operator (`%>%`) from the dplyr package, the variable was initially chosen and summarised to obtain counts for each level of the variable.
+
+### Visualizing counts of GENRE
+
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+df %>%
+          select_if(is.character) %>%
+          group_by(genre) %>%
+          summarise(counts = n()) %>%
+          na.omit() %>%
+          ggplot(mapping = aes(x = reorder(genre, counts), 
+                               y = counts, 
+                               fill = genre)) +
+                    geom_bar(stat = "identity", 
+                             color = "black", 
+                             position = position_dodge(width = 0.9)) +
+          coord_flip() +
+          geom_text(aes(label = counts), hjust = 1.5,vjust = 0.5, 
+                    colour = "white", fontface = "bold", 
+                    position = position_dodge(width = 0.9)) +
+          labs(x = "", title = "Counts of variable genre") +
+          scale_fill_brewer(palette = "Set2") +
+          theme_bw()
+```
+```{r include=FALSE}
+# Getting counts of the variable genre in descending order
+df.genre.max <- df %>% 
+          group_by(genre) %>% 
+          na.omit() %>% 
+          summarise(counts = n()) %>%
+          arrange(desc(counts))
+
+max.movies <- as.numeric(paste(df.genre.max[1,2]))
+cat.movies <- paste(df.genre.max[1,1])
+
+action <- na.omit(count(df, genre == "Action")[2,2])
+# Getting counts of the variable GENRE in ascenidng order
+df.genre.min <- df.genre.max %>% 
+          arrange(counts)
+
+min.movies <- paste(df.genre.min[1,1])
+c.min.movies <- as.numeric(paste(df.genre.min[1,2]))
+```
+
+
+Maximum number of movies (`r max.movies`) in this data set belongs to category `r cat.movies`. The total number of movies that belong to type Action were `r action`. However, the least number of movies were recorded in category `r min.movies` with counts of `r c.min.movies`.
+
+### Visualizing counts of rating
+
+```{r echo=TRUE}
+df %>%
+          select_if(is.character) %>%
+          group_by(rating) %>%
+          summarise(counts = n()) %>%
+          na.omit() %>%
+          ggplot(mapping = aes(x = reorder(rating, counts), 
+                               y = counts, 
+                               fill = rating)) +
+                    geom_bar(stat = "identity", 
+                             color = "black", 
+                             position = position_dodge(width = 0.9)) +
+          coord_flip() +
+          geom_text(aes(label = counts), hjust = 1.5,vjust = 0.5, 
+                    colour = "white", fontface = "bold", 
+                    position = position_dodge(width = 0.9)) +
+          labs(x = "", title = "Counts of variable rating") +
+          scale_fill_brewer(palette = "Set2") +
+          theme_bw()
+
+```
